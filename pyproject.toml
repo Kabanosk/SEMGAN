@@ -13,6 +13,7 @@ pystoi = "^0.4.1"
 scipy = "^1.14.1"
 numpy = "^2.1.2"
 pesq = "^0.0.4"
+torchaudio = "^2.5.0"
 
 
 [build-system]
