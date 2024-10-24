@@ -1,0 +1,20 @@
+[tool.poetry]
+name = "semgan"
+version = "0.1.0"
+description = "Repository for my B.Eng. thesis project, a Speech Enhancement Multi-Discriminator Generative Adversarial Network (SEMGAN)."
+authors = ["Wojciech Fiołka <fiolkawojciech@gmail.com>"]
+license = "MIT"
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.11"
+torch = "^2.5.0"
+pystoi = "^0.4.1"
+scipy = "^1.14.1"
+numpy = "^2.1.2"
+pesq = "^0.0.4"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
