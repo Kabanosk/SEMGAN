@@ -17,7 +17,7 @@ def calculate_pesq(
         fs (int): Sampling rate.
 
     Returns:
-    - pesq_score (float): PESQ score.
+        pesq_score (float): PESQ score.
     """
     pesq_score: float = pesq(fs, clean_signal, enhanced_signal)
     return pesq_score
@@ -26,13 +26,13 @@ def calculate_pesq(
 def calculate_stoi(clean_signal: np.array, enhanced_signal: np.array, fs: int) -> float:
     """Calculate STOI score.
 
-    Parameters:
-    - clean_signal (np.array): Clean reference speech signal.
-    - enhanced_signal (np.array): Enhanced speech signal.
-    - fs (int): Sampling rate.
+    Args:
+        clean_signal (np.array): Clean reference speech signal.
+        enhanced_signal (np.array): Enhanced speech signal.
+        fs (int): Sampling rate.
 
     Returns:
-    - stoi_score (float): STOI score.
+        stoi_score (float): STOI score.
     """
     stoi_score: float = stoi(clean_signal, enhanced_signal, fs, extended=False)
     return stoi_score
