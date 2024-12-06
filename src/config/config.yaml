@@ -1,0 +1,5 @@
+train:
+  epochs: 100
+  batch_size: 32
+  output_path: "semgan/results/0.0.1"
+  model_name: "semgan"
