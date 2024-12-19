@@ -2,31 +2,7 @@
 import torch
 import torch.nn as nn
 
-
-class ConvBlockG(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size, stride, padding):
-        super().__init__()
-        self.conv = nn.Conv1d(in_channels, out_channels, kernel_size, stride, padding)
-        self.prelu = nn.PReLU()
-
-    def forward(self, x):
-        x = self.conv(x)
-        x = self.prelu(x)
-        return x
-
-
-class DeconvBlockG(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size, stride, padding):
-        super().__init__()
-        self.deconv = nn.ConvTranspose1d(in_channels, out_channels, kernel_size, stride, padding)
-        self.prelu = nn.PReLU()
-
-    def forward(self, x, skip_connection):
-        x = self.deconv(x)
-        x = torch.cat((x, skip_connection), dim=1)
-        x = self.prelu(x)
-        return x
-
+from src.utils.model import ConvBlockG, DeconvBlockG
 
 class Generator(nn.Module):
     """G"""
