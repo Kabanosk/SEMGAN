@@ -1,11 +1,13 @@
 """Utility functions and classes for the model."""
-from src.model.segan.generator import Generator
-from src.model.segan.discriminator import Discriminator as SeganDiscriminator
-from src.model.semgan.discriminator import WaveDiscriminator
 
 import torch
 import torch.nn as nn
 from torch.nn.parameter import Parameter
+
+from src.model.segan.discriminator import Discriminator as SeganDiscriminator
+from src.model.segan.generator import Generator
+from src.model.semgan.fourier_discriminator import FourierDiscriminator
+from src.model.semgan.mel_discriminator import MelDiscriminator
 
 
 class VirtualBatchNorm1d(nn.Module):
@@ -29,7 +31,9 @@ class VirtualBatchNorm1d(nn.Module):
         super().__init__()
         self.num_features = num_features
         self.eps = eps
-        self.gamma = Parameter(torch.normal(mean=1.0, std=0.02, size=(1, num_features, 1)))
+        self.gamma = Parameter(
+            torch.normal(mean=1.0, std=0.02, size=(1, num_features, 1))
+        )
         self.beta = Parameter(torch.zeros(1, num_features, 1))
 
     @staticmethod
@@ -45,10 +49,15 @@ class VirtualBatchNorm1d(nn.Module):
             mean_sq: Squared mean tensor over features.
         """
         mean = x.mean(2, keepdim=True).mean(0, keepdim=True)
-        mean_sq = (x ** 2).mean(2, keepdim=True).mean(0, keepdim=True)
+        mean_sq = (x**2).mean(2, keepdim=True).mean(0, keepdim=True)
         return mean, mean_sq
 
-    def forward(self, x: torch.Tensor, ref_mean: torch.Tensor = None, ref_mean_sq: torch.Tensor = None) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def forward(
+        self,
+        x: torch.Tensor,
+        ref_mean: torch.Tensor = None,
+        ref_mean_sq: torch.Tensor = None,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Perform forward pass of VBN.
 
         If reference statistics are provided, use them for normalization.
@@ -71,14 +80,16 @@ class VirtualBatchNorm1d(nn.Module):
             out = self.normalize(x, mean, mean_sq)
         else:
             batch_size = x.size(0)
-            new_coeff = 1. / (batch_size + 1.)
-            old_coeff = 1. - new_coeff
+            new_coeff = 1.0 / (batch_size + 1.0)
+            old_coeff = 1.0 - new_coeff
             mean = new_coeff * mean + old_coeff * ref_mean
             mean_sq = new_coeff * mean_sq + old_coeff * ref_mean_sq
             out = self.normalize(x, mean, mean_sq)
         return out, mean, mean_sq
 
-    def normalize(self, x: torch.Tensor, mean: torch.Tensor, mean_sq: torch.Tensor) -> torch.Tensor:
+    def normalize(
+        self, x: torch.Tensor, mean: torch.Tensor, mean_sq: torch.Tensor
+    ) -> torch.Tensor:
         """
         Normalize the input tensor using provided statistics.
 
@@ -94,13 +105,19 @@ class VirtualBatchNorm1d(nn.Module):
         assert mean is not None
         assert len(x.size()) == 3  # specific for 1d VBN
         if mean.size(1) != self.num_features:
-            raise Exception('Mean tensor size not equal to number of features: given {}, expected {}'
-                            .format(mean.size(1), self.num_features))
+            raise Exception(
+                "Mean tensor size not equal to number of features: given {}, expected {}".format(
+                    mean.size(1), self.num_features
+                )
+            )
         if mean_sq.size(1) != self.num_features:
-            raise Exception('Squared mean tensor size not equal to number of features: given {}, expected {}'
-                            .format(mean_sq.size(1), self.num_features))
+            raise Exception(
+                "Squared mean tensor size not equal to number of features: given {}, expected {}".format(
+                    mean_sq.size(1), self.num_features
+                )
+            )
 
-        std = torch.sqrt(self.eps + mean_sq - mean ** 2)
+        std = torch.sqrt(self.eps + mean_sq - mean**2)
         x = x - mean
         x = x / std
         x = x * self.gamma
@@ -108,8 +125,9 @@ class VirtualBatchNorm1d(nn.Module):
         return x
 
     def __repr__(self) -> str:
-        return ('{name}(num_features={num_features}, eps={eps})'
-                .format(name=self.__class__.__name__, **self.__dict__))
+        return "{name}(num_features={num_features}, eps={eps})".format(
+            name=self.__class__.__name__, **self.__dict__
+        )
 
 
 class ConvBlockD(nn.Module):
@@ -118,7 +136,17 @@ class ConvBlockD(nn.Module):
     This block consists of a convolutional layer, VBN layer, LeakyReLU activation,
     and an optional dropout layer.
     """
-    def __init__(self, in_channels: int, out_channels: int, kernel_size: int, stride: int = 1, padding: int = 0, negative_slope: float = 0.03, use_dropout: bool = False):
+
+    def __init__(
+        self,
+        in_channels: int,
+        out_channels: int,
+        kernel_size: int,
+        stride: int = 1,
+        padding: int = 0,
+        negative_slope: float = 0.03,
+        use_dropout: bool = False,
+    ):
         """
         Initialize the convolutional block.
 
@@ -137,7 +165,12 @@ class ConvBlockD(nn.Module):
         self.lrelu = nn.LeakyReLU(negative_slope)
         self.dropout = nn.Dropout() if use_dropout else nn.Identity()
 
-    def forward(self, x: torch.Tensor, ref_mean: torch.Tensor = None, ref_mean_sq: torch.Tensor = None) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def forward(
+        self,
+        x: torch.Tensor,
+        ref_mean: torch.Tensor = None,
+        ref_mean_sq: torch.Tensor = None,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Perform forward pass of the convolutional block.
 
@@ -173,7 +206,9 @@ class ConvBlockG(nn.Module):
 class DeconvBlockG(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size, stride, padding):
         super().__init__()
-        self.deconv = nn.ConvTranspose1d(in_channels, out_channels, kernel_size, stride, padding)
+        self.deconv = nn.ConvTranspose1d(
+            in_channels, out_channels, kernel_size, stride, padding
+        )
         self.prelu = nn.PReLU()
 
     def forward(self, x, skip_connection):
@@ -183,24 +218,91 @@ class DeconvBlockG(nn.Module):
         return x
 
 
-def get_model(model_name: str) -> tuple[Generator, SeganDiscriminator | WaveDiscriminator]:
-    """Function to create instance of model.
+class Conv2dBlockD(nn.Module):
+    """Discriminator 2D convolutional block for Mel Spectrogram."""
+
+    def __init__(
+        self,
+        in_channels: int,
+        out_channels: int,
+        kernel_size: int,
+        stride: int = 1,
+        padding: int = 0,
+        negative_slope: float = 0.03,
+        use_dropout: bool = False,
+    ):
+        """
+        Initialize the 2D convolutional block for Mel spectrogram.
+
+        Args:
+            in_channels: Number of input channels (e.g., 1 for a single-channel mel spectrogram).
+            out_channels: Number of output channels.
+            kernel_size: Size of the convolutional kernel.
+            stride: Stride for the convolution. Default is 1.
+            padding: Padding added to the input. Default is 0.
+            negative_slope: Negative slope for LeakyReLU. Default is 0.03.
+            use_dropout: Whether to apply dropout. Default is False.
+        """
+        super().__init__()
+        self.conv = nn.Conv2d(in_channels, out_channels, kernel_size, stride, padding)
+        self.vbn = VirtualBatchNorm1d(out_channels)  # Use VBN for 2D features
+        self.lrelu = nn.LeakyReLU(negative_slope)
+        self.dropout = nn.Dropout() if use_dropout else nn.Identity()
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        ref_mean: torch.Tensor = None,
+        ref_mean_sq: torch.Tensor = None,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """
+        Perform forward pass of the 2D convolutional block.
+
+        Args:
+            x: Input tensor (mel spectrogram).
+            ref_mean: Reference mean tensor for VBN (optional).
+            ref_mean_sq: Reference squared mean tensor for VBN (optional).
+
+        Returns:
+            x: Output tensor after applying all operations.
+            mean: Mean tensor computed from the input batch.
+            mean_sq: Squared mean tensor computed from the input batch.
+        """
+        x = self.conv(x)
+        x, mean, mean_sq = self.vbn(x, ref_mean, ref_mean_sq)
+        x = self.lrelu(x)
+        x = self.dropout(x)
+        return x, mean, mean_sq
+
+
+def get_model(model_name: str) -> tuple[Generator, list[nn.Module]]:
+    """Function to create instance of model with a list of discriminators.
 
     Args:
-        model_name: Name of GAN model to load.
+        model_name: Name of GAN model to load. This determines which type of discriminators to return.
 
     Returns:
-        Generator: Generator object - same for each model name.
-        Discriminator: Discriminator object - type depend on selected model name.
+        Generator: Generator object (same for each model name).
+        list[torch.nn.Module]: List of Discriminator objects - one or more depending on the model name.
 
     Raises:
         ValueError: If parameter model_name is not supported.
 
     """
+    generator = Generator()
+
     match model_name.lower():
         case "segan":
-            return Generator(), SeganDiscriminator()
+            discriminators = [SeganDiscriminator()]
         case "semgan":
-            return Generator(), WaveDiscriminator()
+            discriminators = [
+                SeganDiscriminator(),  # Discriminator for waveform input same as the SEGAN model
+                MelDiscriminator(),  # Discriminator for mel spectrogram input
+                FourierDiscriminator(),  # Discriminator for Fourier transform input
+            ]
         case _:
-            raise ValueError("Not supported model name. Model name should be from ['segan', 'semgan'].")
+            raise ValueError(
+                "Not supported model name. Model name should be from ['segan', 'semgan']."
+            )
+
+    return generator, discriminators

@@ -1,4 +1,5 @@
 """SEGAN discriminator model."""
+
 import torch
 import torch.nn as nn
 
@@ -18,19 +19,21 @@ class Discriminator(nn.Module):
         Initialize the WaveDiscriminator model with convolutional blocks and final layers.
         """
         super().__init__()
-        self.conv_blocks = nn.ModuleList([
-            ConvBlockD(2, 32, 31, 2, 15),
-            ConvBlockD(32, 64, 31, 2, 15),
-            ConvBlockD(64, 64, 31, 2, 15, use_dropout=True),
-            ConvBlockD(64, 128, 31, 2, 15),
-            ConvBlockD(128, 128, 31, 2, 15),
-            ConvBlockD(128, 256, 31, 2, 15, use_dropout=True),
-            ConvBlockD(256, 256, 31, 2, 15),
-            ConvBlockD(256, 512, 31, 2, 15),
-            ConvBlockD(512, 512, 31, 2, 15, use_dropout=True),
-            ConvBlockD(512, 1024, 31, 2, 15),
-            ConvBlockD(1024, 2048, 31, 2, 15)
-        ])
+        self.conv_blocks = nn.ModuleList(
+            [
+                ConvBlockD(2, 32, 31, 2, 15),
+                ConvBlockD(32, 64, 31, 2, 15),
+                ConvBlockD(64, 64, 31, 2, 15, use_dropout=True),
+                ConvBlockD(64, 128, 31, 2, 15),
+                ConvBlockD(128, 128, 31, 2, 15),
+                ConvBlockD(128, 256, 31, 2, 15, use_dropout=True),
+                ConvBlockD(256, 256, 31, 2, 15),
+                ConvBlockD(256, 512, 31, 2, 15),
+                ConvBlockD(512, 512, 31, 2, 15, use_dropout=True),
+                ConvBlockD(512, 1024, 31, 2, 15),
+                ConvBlockD(1024, 2048, 31, 2, 15),
+            ]
+        )
         self.conv_final = nn.Conv1d(2048, 1, kernel_size=1, stride=1)
         self.lrelu_final = nn.LeakyReLU(0.03)
         self.fully_connected = nn.Linear(in_features=8, out_features=1)
