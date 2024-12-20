@@ -10,7 +10,7 @@ from torch.utils.data import Dataset
 class AudioDataset(Dataset):
     """Class for loading and processing the audio dataset."""
 
-    def __init__(self, base_path: str | Path, data_name: str, device: str = "cuda"):
+    def __init__(self, base_path: str | Path, data_name: str, device: torch.device | str = "cuda"):
         self.waveform_dataset: list = []
         self.mel_spectrogram_dataset: list = []
         self.fourier_transform_dataset: list = []
