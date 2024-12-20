@@ -1,5 +1,18 @@
+data:
+  path: "data/"
+  name: "trainset_wav"
+
 train:
-  epochs: 100
-  batch_size: 32
-  output_path: "semgan/results/0.0.1"
+  epochs: 50
+  batch_size: 16
+  lr: 0.0002
+  beta1: 0.5
+  beta2: 0.999
+  output_path: "results/semgan"
   model_name: "semgan"
+
+wandb:
+  project: "semgan_project"
+  tags:
+    - "debug"
+  notes: "Training with default configuration"
