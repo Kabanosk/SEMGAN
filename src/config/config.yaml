@@ -16,3 +16,4 @@ wandb:
   tags:
     - "debug"
   notes: "Training with default configuration"
+  entity: "330083"

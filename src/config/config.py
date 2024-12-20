@@ -1,6 +1,8 @@
 import logging
 from pathlib import Path
+
 import yaml
+
 from src.utils.logger import create_logger
 
 
@@ -18,7 +20,9 @@ def load_config(path: str | Path) -> dict:
 
     if not path.exists():
         logger.error(f"Config file '{path}' not found.")
-        raise ValueError(f"Configuration file '{path}' not found, and no default provided.")
+        raise ValueError(
+            f"Configuration file '{path}' not found, and no default provided."
+        )
 
     try:
         with path.open() as file:

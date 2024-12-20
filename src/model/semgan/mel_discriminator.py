@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 
-from src.utils.model import Conv2dBlockD
+from src.model.utils import Conv2dBlockD
 
 
 class MelDiscriminator(nn.Module):

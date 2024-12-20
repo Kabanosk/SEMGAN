@@ -10,10 +10,13 @@ from torch.utils.data import Dataset
 class AudioDataset(Dataset):
     """Class for loading and processing the audio dataset."""
 
-    def __init__(self, base_path: str | Path, data_name: str, device: torch.device | str = "cuda"):
+    def __init__(
+        self, base_path: str | Path, data_name: str, device: torch.device | str = "cuda"
+    ):
         self.waveform_dataset: list = []
         self.mel_spectrogram_dataset: list = []
         self.fourier_transform_dataset: list = []
+        self.noisy_waveform_dataset: list = []
         self.device: str = device
 
         self.path_to_dataset: Path = Path(base_path)
@@ -36,6 +39,7 @@ class AudioDataset(Dataset):
                 noisy_waveform, _ = torchaudio.load(noisy_wav_file)
 
                 self.waveform_dataset.append(clean_waveform)
+                self.noisy_waveform_dataset.append(noisy_waveform)
 
                 mel_spectrogram_transform = torchaudio.transforms.MelSpectrogram(
                     sample_rate=sr
@@ -52,6 +56,7 @@ class AudioDataset(Dataset):
             self.waveform_dataset[idx].to(self.device),
             self.mel_spectrogram_dataset[idx].to(self.device),
             self.fourier_transform_dataset[idx].to(self.device),
+            self.noisy_waveform_dataset[idx].to(self.device),
         )
 
     def __len__(self):

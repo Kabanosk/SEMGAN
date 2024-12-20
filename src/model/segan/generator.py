@@ -3,7 +3,7 @@
 import torch
 import torch.nn as nn
 
-from src.utils.model import ConvBlockG, DeconvBlockG
+from src.model.utils import ConvBlockG, DeconvBlockG
 
 
 class Generator(nn.Module):

@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 
-from src.utils.model import ConvBlockD
+from src.model.utils import ConvBlockD
 
 
 class FourierDiscriminator(nn.Module):
