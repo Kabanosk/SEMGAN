@@ -1,6 +1,7 @@
 data:
   path: "data/"
-  name: "trainset_wav"
+  train: "trainset_200_samples"
+  test: "testset_wav"
 
 train:
   epochs: 50
