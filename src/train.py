@@ -3,210 +3,152 @@ from pathlib import Path
 
 import torch
 import torch.nn as nn
-import torchaudio
-from torch import optim
+import wandb
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-import wandb
-from src.config.config import load_config
-from src.utils.data import AudioDataset
-from src.utils.logger import create_logger
-from src.utils.model import get_model
-
 
 def parse_arguments() -> argparse.Namespace:
-    """Parse arguments from the command line."""
-    parser = argparse.ArgumentParser(description="Train a model.")
+    parser = argparse.ArgumentParser(
+        description="Train script for a SEMGAN model for audio enhancement"
+    )
+
     parser.add_argument(
         "-c",
         "--config",
-        type=str,
-        help="Path to the configuration file.",
+        type=Path,
         required=True,
+        help="Path to the configuration YAML file",
     )
     return parser.parse_args()
 
 
 def setup_wandb(config: dict) -> None:
-    """Initialize Weights and Biases."""
-    wandb.init(
-        project=config["wandb"].get("project", "semgan_project"),
-        tags=config["wandb"].get("tags", []),
-        entity=config["wandb"].get("entity", None),
-        config=config,
-        save_code=True,
-    )
-
-
-def create_dataloaders(config: dict, device: str) -> tuple[DataLoader, DataLoader]:
-    """
-    Create train and test dataloaders.
+    """Initialize Weights & Biases logging.
 
     Args:
-        config: Configuration dictionary
-        device: Device to load data to
+        config: Dictionary containing configuration parameters
+
+    The function expects the following keys in the config dictionary:
+        - wandb_project: Name of the W&B project
+        - wandb_entity: W&B entity (username or team name)
+        - wandb_tags: List of tags for the run
+        - wandb_notes: Notes for the run
+
+    Additional configuration parameters will be logged as part of the run config.
+    """
+    try:
+        wandb_config = config["wandb"]
+        wandb.init(
+            project=wandb_config["project"],
+            entity=wandb_config["entity"],
+            config=wandb_config,
+            tags=wandb_config["tags"],
+            notes=wandb_config["notes"],
+        )
+
+        # Log important config parameters explicitly
+        wandb.run.summary["batch_size"] = config["train"]["batch_size"]
+        wandb.run.summary["learning_rate"] = config["train"]["lr"]
+        wandb.run.summary["model_type"] = config["train"]["model_name"]
+        wandb.run.summary["beta1"] = config["train"]["beta1"]
+        wandb.run.summary["beta2"] = config["train"]["beta2"]
+
+    except Exception as e:
+        print(f"Warning: Failed to initialize W&B logging: {str(e)}")
+        print("Training will continue without W&B logging")
+
+
+def process_discriminator_input(
+    discriminator: nn.Module,
+    clean_wave: torch.Tensor,
+    clean_mel: torch.Tensor,
+    clean_fourier: torch.Tensor,
+    noisy_wave: torch.Tensor,
+    fake_wave: torch.Tensor,
+    device: torch.device | str,
+    is_training: bool = True,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Process and prepare input tensors for different types of discriminators.
+
+    This function handles three types of discriminators (wave, mel, and fourier) and prepares
+    the appropriate input format for each type. It processes both real (clean) and fake
+    (generated) inputs according to the discriminator type.
+
+    Args:
+        discriminator: Neural network discriminator module.
+        clean_wave: Clean waveform tensor, shape (batch_size, channels, samples).
+        clean_mel: Clean mel-spectrogram tensor.
+        clean_fourier: Clean Fourier transform tensor.
+        noisy_wave: Noisy waveform tensor, shape (batch_size, channels, samples).
+        fake_wave: Generated/fake waveform tensor, shape (batch_size, channels, samples).
+        device: PyTorch device to use for computations.
+        is_training: Whether the model is in training mode. If True, detaches fake wave
+            gradient for discriminator training. Defaults to True.
 
     Returns:
-        tuple: (train_loader, test_loader) containing clean and noisy data loaders
+        Tuple:
+            - real_input: Processed clean/real input tensor appropriate for the discriminator type.
+            - fake_input: Processed fake/generated input tensor appropriate for the discriminator type.
     """
-    # Training data
-    train_dataset = AudioDataset(
-        base_path=config["data"]["path"], data_name=config["data"]["train"], device=device
-    )
+    if isinstance(discriminator, type(discriminators[0])):  # Wave discriminator
+        if clean_wave.size(1) == 1:
+            clean_wave = clean_wave.expand(-1, 2, -1)
+        if noisy_wave.size(1) == 1:
+            noisy_wave = noisy_wave.expand(-1, 2, -1)
 
-    # Test data
-    test_dataset = AudioDataset(
-        base_path=config["data"]["path"], data_name=config["data"]["test"], device=device
-    )
+        fake_wave_temp = fake_wave.detach() if is_training else fake_wave
+        if fake_wave_temp.size(1) == 1:
+            fake_wave_temp = fake_wave_temp.expand(-1, 2, -1)
 
-    # Create data loaders
-    train_loader = DataLoader(
-        train_dataset,
-        batch_size=config["train"]["batch_size"],
-        shuffle=True,
-        num_workers=config["train"].get("num_workers", 4),
-        pin_memory=True,
-    )
+        real_input = clean_wave
+        fake_input = fake_wave_temp
 
-    test_loader = DataLoader(
-        test_dataset,
-        batch_size=config["train"]["batch_size"],
-        shuffle=False,
-        num_workers=config["train"].get("num_workers", 4),
-        pin_memory=True,
-    )
+    elif isinstance(discriminator, type(discriminators[1])):  # Mel discriminator
+        real_input = clean_mel
+        fake_wave_temp = fake_wave.detach() if is_training else fake_wave
 
-    return train_loader, test_loader
+        # Compute STFT
+        window = torch.hann_window(1024).to(device)
+        stft = torch.stft(
+            fake_wave_temp.squeeze(1),
+            n_fft=1024,
+            hop_length=512,
+            win_length=1024,
+            window=window,
+            return_complex=True,
+            normalized=True,
+        )
+        fake_input = torch.abs(stft).unsqueeze(1)
+    else:  # Fourier discriminator
+        real_input = clean_fourier
+        fake_wave_temp = fake_wave.detach() if is_training else fake_wave
+
+        # Compute FFT and get real/imaginary parts
+        fft = torch.fft.fft(fake_wave_temp.squeeze(1))
+        fake_input = torch.stack([fft.real, fft.imag], dim=1)
+
+    return real_input, fake_input
 
 
-def evaluate_model(
+def train_gan(
     generator: nn.Module,
     discriminators: list[nn.Module],
-    test_loader: DataLoader,
-    criterion: nn.Module,
-    device: str,
-    z_dim: int,
-    lambdas: list[float],
-) -> dict:
-    """
-    Evaluate the model on test data.
-
-    Returns:
-        dict: Dictionary containing test metrics
-    """
-    generator.eval()
-    for d in discriminators:
-        d.eval()
-
-    test_g_loss = 0.0
-    test_d_losses = [0.0] * len(discriminators)
-
-    with torch.no_grad():
-        pbar = tqdm(test_loader, desc="Evaluating")
-        for clean_batch, clean_mel, clean_fourier, noisy_batch in pbar:
-            batch_size = clean_batch.size(0)
-
-            # Move data to device
-            clean_data = [
-                clean_batch.to(device),
-                clean_mel.to(device),
-                clean_fourier.to(device),
-            ]
-
-            # Create labels
-            real_label = torch.ones(batch_size, 1).to(device)
-            fake_label = torch.zeros(batch_size, 1).to(device)
-
-            # Generate noise
-            z = torch.randn(batch_size, z_dim, 1).to(device)
-
-            # Generate fake samples
-            fake_wave = generator(noisy_batch.to(device), z)
-            fake_mel = torchaudio.transforms.MelSpectrogram()(fake_wave)
-            fake_fourier = torch.fft.fft(fake_wave)
-            fake_data = [fake_wave, fake_mel, fake_fourier]
-
-            # Compute discriminator losses
-            for i, discriminator in enumerate(discriminators):
-                d_real = (
-                    discriminator(clean_data[i], clean_data[i])
-                    if i == 0
-                    else discriminator(clean_data[i])
-                )
-                d_fake = (
-                    discriminator(fake_data[i], clean_data[i])
-                    if i == 0
-                    else discriminator(fake_data[i])
-                )
-
-                d_loss = criterion(d_real, real_label) + criterion(d_fake, fake_label)
-                test_d_losses[i] += d_loss.item()
-
-            # Compute generator loss
-            g_loss = 0
-            for i, (discriminator, lambda_i) in enumerate(zip(discriminators, lambdas)):
-                d_output = (
-                    discriminator(fake_data[i], clean_data[i])
-                    if i == 0
-                    else discriminator(fake_data[i])
-                )
-                g_loss += lambda_i * criterion(d_output, real_label)
-
-            test_g_loss += g_loss.item()
-
-    # Calculate average losses
-    avg_test_g_loss = test_g_loss / len(test_loader)
-    avg_test_d_losses = [d_loss / len(test_loader) for d_loss in test_d_losses]
-
-    return {
-        "test_g_loss": avg_test_g_loss,
-        **{f"test_d{i}_loss": d_loss for i, d_loss in enumerate(avg_test_d_losses)},
-    }
-
-
-def train_speech_enhancement_gan(
-    generator: nn.Module,
-    discriminators: list[nn.Module],
-    config_path: str,
-    device: str = "cuda",
-    z_dim: int = 1024,
-    lambdas: list[float] = None,
-):
-    """
-    Train the speech enhancement GAN with multiple discriminators using config file.
-    """
-    # Load configuration
-    config = load_config(config_path)
-    logger = create_logger()
-
-    # Move models to device
+    train_dataloader: DataLoader,
+    config: dict,
+    device: torch.device | str = "cuda",
+) -> None:
     generator = generator.to(device)
     discriminators = [d.to(device) for d in discriminators]
 
-    # Set default lambda weights if not provided
-    if lambdas is None:
-        lambdas = [1.0 / len(discriminators)] * len(discriminators)
-
-    # Initialize wandb
-    setup_wandb(config)
-
-    # Create output directory
-    output_path = Path(config["train"]["output_path"])
-    output_path.mkdir(parents=True, exist_ok=True)
-
-    # Create data loaders
-    train_loader, test_loader = create_dataloaders(config, device)
-
     # Setup optimizers
-    g_optimizer = optim.Adam(
+    g_optimizer = torch.optim.Adam(
         generator.parameters(),
         lr=config["train"]["lr"],
         betas=(config["train"]["beta1"], config["train"]["beta2"]),
     )
-
     d_optimizers = [
-        optim.Adam(
+        torch.optim.Adam(
             d.parameters(),
             lr=config["train"]["lr"],
             betas=(config["train"]["beta1"], config["train"]["beta2"]),
@@ -214,203 +156,178 @@ def train_speech_enhancement_gan(
         for d in discriminators
     ]
 
-    # Loss function
-    criterion = nn.BCELoss()
+    # Loss functions and constants
+    adversarial_loss = nn.BCELoss()
+    l1_loss = nn.L1Loss()
+    NUM_EPOCHS = config["train"]["epochs"]
+    LAMBDA_L1 = 100
 
-    # Training loops
-    best_g_loss = float("inf")
-    for epoch in range(config["train"]["epochs"]):
+    # Create output directory
+    output_path = Path(config["train"]["output_path"])
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    # Training loop
+    for epoch in range(NUM_EPOCHS):
         generator.train()
         for d in discriminators:
             d.train()
 
-        running_g_loss = 0.0
-        running_d_losses = [0.0] * len(discriminators)
+        progress_bar = tqdm(train_dataloader, desc=f"Epoch {epoch + 1}/{NUM_EPOCHS}")
 
-        pbar = tqdm(train_loader, desc=f"Epoch {epoch + 1}/{config['train']['epochs']}")
-        for data in pbar:
-            clean_batch, clean_mel, clean_fourier, noisy_batch = data
-            batch_size = clean_batch.size(0)
+        for batch_idx, (clean_wave, clean_mel, clean_fourier, noisy_wave) in enumerate(
+            progress_bar
+        ):
+            batch_size = clean_wave.size(0)
 
-            # Move data to device
-            clean_data = [
-                clean_batch.to(device),
-                clean_mel.to(device),
-                clean_fourier.to(device),
-            ]
+            # Ensure correct input dimensions
+            if clean_wave.dim() == 2:
+                clean_wave = clean_wave.unsqueeze(1)
+            if noisy_wave.dim() == 2:
+                noisy_wave = noisy_wave.unsqueeze(1)
 
-            # Create labels
+            # Move to device
+            clean_wave = clean_wave.to(device)
+            clean_mel = clean_mel.to(device)
+            clean_fourier = clean_fourier.to(device)
+            noisy_wave = noisy_wave.to(device)
+
+            # Labels
             real_label = torch.ones(batch_size, 1).to(device)
             fake_label = torch.zeros(batch_size, 1).to(device)
 
             # Generate noise
-            z = torch.randn(batch_size, z_dim, 8).to(device)
+            z = torch.randn(batch_size, 1024, 8).to(device)
 
-            # Train Discriminators
-            d_losses = []
-            for i, (discriminator, d_optimizer) in enumerate(
-                zip(discriminators, d_optimizers)
-            ):
-                d_optimizer.zero_grad()
-
+            try:
                 # Generate fake samples
-                fake_wave = generator(noisy_batch.to(device), z)
-                fake_mel = torchaudio.transforms.MelSpectrogram(sample_rate=48000)(
-                    fake_wave
+                fake_wave = generator(noisy_wave, z)
+
+                # Train Discriminators
+                d_losses = []
+                for idx, (discriminator, d_optimizer) in enumerate(
+                    zip(discriminators, d_optimizers)
+                ):
+                    d_optimizer.zero_grad()
+
+                    real_input, fake_input = process_discriminator_input(
+                        discriminator,
+                        clean_wave,
+                        clean_mel,
+                        clean_fourier,
+                        noisy_wave,
+                        fake_wave,
+                        device,
+                    )
+
+                    d_real = discriminator(real_input, real_input)
+                    d_fake = discriminator(fake_input, real_input)
+
+                    d_loss_real = adversarial_loss(d_real, real_label)
+                    d_loss_fake = adversarial_loss(d_fake, fake_label)
+                    d_loss = (d_loss_real + d_loss_fake) / 2
+                    d_losses.append(d_loss)
+
+                    d_loss.backward(
+                        retain_graph=True if idx < len(discriminators) - 1 else False
+                    )
+                    d_optimizer.step()
+
+                # Train Generator
+                g_optimizer.zero_grad()
+
+                g_losses = []
+                for discriminator in discriminators:
+                    _, fake_input = process_discriminator_input(
+                        discriminator,
+                        clean_wave,
+                        clean_mel,
+                        clean_fourier,
+                        noisy_wave,
+                        fake_wave,
+                        device,
+                        is_training=False,
+                    )
+
+                    g_fake = discriminator(fake_input, fake_input)
+                    g_loss = adversarial_loss(g_fake, real_label)
+                    g_losses.append(g_loss)
+
+                reconstruction_loss = l1_loss(fake_wave, clean_wave)
+                g_loss_total = sum(g_losses) + LAMBDA_L1 * reconstruction_loss
+
+                g_loss_total.backward()
+                g_optimizer.step()
+
+                # Logging
+                if wandb.run is not None:
+                    wandb.log(
+                        {
+                            "d_loss_wave": d_losses[0].item(),
+                            "d_loss_mel": d_losses[1].item(),
+                            "d_loss_fourier": d_losses[2].item(),
+                            "g_loss_wave": g_losses[0].item(),
+                            "g_loss_mel": g_losses[1].item(),
+                            "g_loss_fourier": g_losses[2].item(),
+                            "g_loss_reconstruction": reconstruction_loss.item(),
+                            "g_loss_total": g_loss_total.item(),
+                        }
+                    )
+
+                progress_bar.set_postfix(
+                    {
+                        "D_loss": sum(d_losses).item() / len(d_losses),
+                        "G_loss": g_loss_total.item(),
+                    }
                 )
-                fake_fourier = torch.fft.fft(fake_wave)
-                fake_data = [fake_wave, fake_mel, fake_fourier]
 
-                d_real = (
-                    discriminator(clean_data[i], clean_data[i])
-                    if i != 1
-                    else discriminator(clean_data[i])
-                )
-                d_fake = (
-                    discriminator(fake_data[i].detach(), clean_data[i])
-                    if i != 1
-                    else discriminator(fake_data[i].detach())
-                )
+            except RuntimeError as e:
+                print(f"Error during training: {str(e)}")
+                print(f"Batch index: {batch_idx}")
+                continue
 
-                d_loss = criterion(d_real, real_label) + criterion(d_fake, fake_label)
-                d_losses.append(d_loss)
-
-                d_loss.backward()
-                d_optimizer.step()
-
-                running_d_losses[i] += d_loss.item()
-
-            # Train Generator
-            g_optimizer.zero_grad()
-
-            # Generate fake samples again
-            fake_wave = generator(noisy_batch.to(device), z)
-            fake_mel = torchaudio.transforms.MelSpectrogram()(fake_wave)
-            fake_fourier = torch.fft.fft(fake_wave)
-            fake_data = [fake_wave, fake_mel, fake_fourier]
-
-            # Compute generator loss
-            g_loss = 0
-            for i, (discriminator, lambda_i) in enumerate(zip(discriminators, lambdas)):
-                d_output = (
-                    discriminator(fake_data[i], clean_data[i])
-                    if i == 0
-                    else discriminator(fake_data[i])
-                )
-                g_loss += lambda_i * criterion(d_output, real_label)
-
-            g_loss.backward()
-            g_optimizer.step()
-
-            running_g_loss += g_loss.item()
-
-            # Update progress bar
-            loss_dict = {
-                f"D{i}_loss": d_loss.item() for i, d_loss in enumerate(d_losses)
-            }
-            loss_dict["G_loss"] = g_loss.item()
-            pbar.set_description(
-                f"Epoch [{epoch + 1}/{config['train']['epochs']}] "
-                + " ".join([f"{k}: {v:.4f}" for k, v in loss_dict.items()])
-            )
-
-            # Log batch metrics
-            wandb.log(
+        # Save checkpoints
+        if (epoch + 1) % 5 == 0:
+            torch.save(
                 {
-                    "batch_g_loss": g_loss.item(),
-                    **{
-                        f"batch_d{i}_loss": d_loss.item()
-                        for i, d_loss in enumerate(d_losses)
-                    },
-                }
+                    "epoch": epoch,
+                    "generator_state_dict": generator.state_dict(),
+                    "discriminator_state_dicts": [
+                        d.state_dict() for d in discriminators
+                    ],
+                    "g_optimizer_state_dict": g_optimizer.state_dict(),
+                    "d_optimizer_state_dicts": [
+                        d_opt.state_dict() for d_opt in d_optimizers
+                    ],
+                },
+                output_path / f"checkpoint_epoch_{epoch + 1}.pt",
             )
-
-        # Calculate average training losses
-        avg_g_loss = running_g_loss / len(train_loader)
-        avg_d_losses = [d_loss / len(train_loader) for d_loss in running_d_losses]
-
-        # Evaluate on test set
-        test_metrics = evaluate_model(
-            generator, discriminators, test_loader, criterion, device, z_dim, lambdas
-        )
-
-        # Log metrics
-        wandb.log(
-            {
-                "epoch": epoch + 1,
-                "train_g_loss": avg_g_loss,
-                **{f"train_d{i}_loss": d_loss for i, d_loss in enumerate(avg_d_losses)},
-                **test_metrics,
-            }
-        )
-
-        # Save best model
-        if test_metrics["test_g_loss"] < best_g_loss:
-            best_g_loss = test_metrics["test_g_loss"]
-            checkpoint = {
-                "epoch": epoch + 1,
-                "generator_state_dict": generator.state_dict(),
-                **{
-                    f"discriminator_{i}_state_dict": d.state_dict()
-                    for i, d in enumerate(discriminators)
-                },
-                "g_optimizer_state_dict": g_optimizer.state_dict(),
-                **{
-                    f"d_optimizer_{i}_state_dict": opt.state_dict()
-                    for i, opt in enumerate(d_optimizers)
-                },
-                "best_g_loss": best_g_loss,
-            }
-            best_model_path = output_path / f"{config['train']['model_name']}_best.pt"
-            torch.save(checkpoint, best_model_path)
-
-        # Save regular checkpoint
-        if (epoch + 1) % config["train"].get("checkpoint_frequency", 10) == 0:
-            checkpoint = {
-                "epoch": epoch + 1,
-                "generator_state_dict": generator.state_dict(),
-                **{
-                    f"discriminator_{i}_state_dict": d.state_dict()
-                    for i, d in enumerate(discriminators)
-                },
-                "g_optimizer_state_dict": g_optimizer.state_dict(),
-                **{
-                    f"d_optimizer_{i}_state_dict": opt.state_dict()
-                    for i, opt in enumerate(d_optimizers)
-                },
-            }
-            save_path = (
-                output_path / f"{config['train']['model_name']}_epoch_{epoch + 1}.pt"
-            )
-            torch.save(checkpoint, save_path)
-
-        logger.info(f"\nEpoch [{epoch + 1}/{config['train']['epochs']}] Metrics:")
-        logger.info(f"Train Generator Loss: {avg_g_loss:.4f}")
-        logger.info(f"Test Generator Loss: {test_metrics['test_g_loss']:.4f}")
-        for i, d_loss in enumerate(avg_d_losses):
-            logger.info(f"Train Discriminator {i} Loss: {d_loss:.4f}")
-            logger.info(
-                f"Test Discriminator {i} Loss: {test_metrics[f'test_d{i}_loss']:.4f}"
-            )
-
-    wandb.finish()
-    return generator, discriminators
-
-
-def main():
-    args = parse_arguments()
-    config = load_config(args.config)
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-
-    generator, discriminators = get_model(config["train"]["model_name"])
-
-    trained_models = train_speech_enhancement_gan(
-        generator=generator,
-        discriminators=discriminators,
-        config_path=args.config,
-        device=device,
-    )
 
 
 if __name__ == "__main__":
-    main()
+    from src.config.config import load_config
+    from src.utils.data import AudioDataset
+    from src.utils.model import get_model
+
+    args = parse_arguments()
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    config = load_config(args.config)
+    setup_wandb(config)
+
+    generator, discriminators = get_model("semgan")
+
+    dataset = AudioDataset(
+        base_path=config["data"]["path"],
+        data_name=config["data"]["train"],
+        device=device,
+        segment_length=16384,
+    )
+    dataloader = DataLoader(
+        dataset,
+        batch_size=config["train"]["batch_size"],
+        shuffle=True,
+        num_workers=4,
+        pin_memory=True,
+    )
+
+    train_gan(generator, discriminators, dataloader, config, device)

@@ -1,4 +1,6 @@
 from pathlib import Path
+
+import numpy as np
 import torch
 import torchaudio
 import torchaudio.transforms as T
@@ -6,18 +8,22 @@ from torch.utils.data import Dataset
 
 
 class AudioDataset(Dataset):
-    """Class for loading and processing the audio dataset."""
+    """Dataset for loading and processing audio files."""
 
     def __init__(
-        self, base_path: str | Path, data_name: str, device: torch.device | str = "cuda"
+        self,
+        base_path: str | Path,
+        data_name: str,
+        device: torch.device | str = "cuda",
+        segment_length: int = 16384,  # ~1 second at 16kHz
+        sample_rate: int = 16000,
     ):
-        self.device: str = device
-        self.sample_rate: int = 16000
-        self.max_length: int = self.sample_rate * 10  # Max length for padding (e.g., 10 seconds for 16kHz)
-        self.path_to_dataset: Path = Path(base_path)
-        self.data_name: str | Path = data_name
+        self.device = device
+        self.sample_rate = sample_rate
+        self.segment_length = segment_length
+        self.path_to_dataset = Path(base_path)
+        self.data_name = data_name
 
-        # Transforms
         self.mel_spectrogram_transform = T.MelSpectrogram(
             sample_rate=self.sample_rate,
             n_mels=64,
@@ -26,72 +32,97 @@ class AudioDataset(Dataset):
             win_length=1024,
         )
 
-        self._load_dataset()
+        self.segments = self._load_dataset()
 
     def _load_dataset(self):
-        """Load audio files and compute features."""
-        clean_trainset_dir = self.path_to_dataset / f"clean_{self.data_name}"
-        noisy_trainset_dir = self.path_to_dataset / f"noisy_{self.data_name}"
+        """Load and process all audio files."""
+        clean_dir = self.path_to_dataset / f"clean_{self.data_name}"
+        noisy_dir = self.path_to_dataset / f"noisy_{self.data_name}"
 
-        self.waveform_dataset: list = []
-        self.mel_spectrogram_dataset: list = []
-        self.fourier_transform_dataset: list = []
-        self.noisy_waveform_dataset: list = []
+        segments = []
 
-        # Loop through clean and noisy audio files and load them
-        for clean_wav_file in clean_trainset_dir.glob("*.wav"):
-            noisy_wav_file = noisy_trainset_dir / clean_wav_file.name  # Get corresponding noisy file
+        for clean_path in clean_dir.glob("*.wav"):
+            noisy_path = noisy_dir / clean_path.name
+            if noisy_path.exists():
+                segments.extend(self._process_audio_file(clean_path, noisy_path))
 
-            if noisy_wav_file.exists():  # Ensure the noisy file exists
-                clean_waveform, sr = torchaudio.load(clean_wav_file)
-                if sr != self.sample_rate:
-                    resampler = T.Resample(orig_freq=sr, new_freq=self.sample_rate)
-                    clean_waveform = resampler(clean_waveform)
+        return segments
 
-                noisy_waveform, sr = torchaudio.load(noisy_wav_file)
-                if sr != self.sample_rate:
-                    resampler = T.Resample(orig_freq=sr, new_freq=self.sample_rate)
-                    noisy_waveform = resampler(noisy_waveform)
+    def _process_audio_file(self, clean_path: Path, noisy_path: Path) -> list:
+        """Process a pair of clean and noisy audio files into segments."""
+        try:
+            clean_waveform, sr = torchaudio.load(clean_path)
+            noisy_waveform, _ = torchaudio.load(noisy_path)
 
-                # Padding if necessary to match max length
-                clean_waveform = self._pad_audio(clean_waveform)
-                noisy_waveform = self._pad_audio(noisy_waveform)
+            if sr != self.sample_rate:
+                resampler = T.Resample(orig_freq=sr, new_freq=self.sample_rate)
+                clean_waveform = resampler(clean_waveform)
+                noisy_waveform = resampler(noisy_waveform)
 
-                self.waveform_dataset.append(clean_waveform)
-                self.noisy_waveform_dataset.append(noisy_waveform)
+            if clean_waveform.size(0) > 1:
+                clean_waveform = torch.mean(clean_waveform, dim=0, keepdim=True)
+            if noisy_waveform.size(0) > 1:
+                noisy_waveform = torch.mean(noisy_waveform, dim=0, keepdim=True)
 
-                # Compute Mel Spectrogram
-                mel_spectrogram = self.mel_spectrogram_transform(clean_waveform)
-                self.mel_spectrogram_dataset.append(mel_spectrogram)
+            segments = []
+            length = clean_waveform.size(1)
 
-                # Compute Fourier Transform (Magnitude Spectrum)
-                fourier_transform = torch.fft.fft(clean_waveform)
-                magnitude = torch.abs(fourier_transform)  # Take magnitude
-                self.fourier_transform_dataset.append(magnitude)
+            for start in range(
+                0, length - self.segment_length + 1, self.segment_length // 2
+            ):
+                end = start + self.segment_length
 
-    def _pad_audio(self, audio_tensor: torch.Tensor) -> torch.Tensor:
-        """Pad audio tensor to max length."""
-        if audio_tensor.size(1) < self.max_length:
-            padding_length = self.max_length - audio_tensor.size(1)
-            audio_tensor = torch.nn.functional.pad(audio_tensor, (0, padding_length))
-        return audio_tensor
+                if end > length:
+                    clean_segment = torch.nn.functional.pad(
+                        clean_waveform[:, start:],
+                        (0, self.segment_length - (length - start)),
+                    )
+                    noisy_segment = torch.nn.functional.pad(
+                        noisy_waveform[:, start:],
+                        (0, self.segment_length - (length - start)),
+                    )
+                else:
+                    clean_segment = clean_waveform[:, start:end]
+                    noisy_segment = noisy_waveform[:, start:end]
 
-    def __getitem__(self, idx):
+                mel_spec = self.mel_spectrogram_transform(clean_segment)
+
+                fft = torch.fft.fft(clean_segment.squeeze(0))
+                fourier = torch.stack([fft.real, fft.imag], dim=0)
+
+                segments.append((clean_segment, mel_spec, fourier, noisy_segment))
+
+            return segments
+
+        except Exception as e:
+            print(f"Error processing file {clean_path}: {str(e)}")
+            return []
+
+    def __getitem__(
+        self, idx: int
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Get a segment from the dataset."""
+        clean_wave, mel_spec, fourier, noisy_wave = self.segments[idx]
+
         return (
-            self.waveform_dataset[idx].to(self.device),
-            self.mel_spectrogram_dataset[idx].to(self.device),
-            self.fourier_transform_dataset[idx].to(self.device),
-            self.noisy_waveform_dataset[idx].to(self.device),
+            clean_wave.to(self.device),
+            mel_spec.to(self.device),
+            fourier.to(self.device),
+            noisy_wave.to(self.device),
         )
 
-    def __len__(self):
-        return len(self.waveform_dataset)
+    def __len__(self) -> int:
+        """Return the number of segments in the dataset."""
+        return len(self.segments)
 
 
 if __name__ == "__main__":
-    dataset = AudioDataset("data/", "testset_wav", device="cpu")
-    print(f"Number of samples: {len(dataset)}")
-    waveform, mel_spectrogram, fourier_transform, _ = dataset[0]
-    print(f"Waveform shape: {waveform.shape}")
-    print(f"Mel spectrogram shape: {mel_spectrogram.shape}")
-    print(f"Fourier transform shape: {fourier_transform.shape}")
+    dataset = AudioDataset("data/", "trainset_200_samples", device="cpu")
+    print(f"Dataset size: {len(dataset)}")
+
+    clean_wave, mel_spec, fourier, noisy_wave = dataset[0]
+    print("\nTensor shapes:")
+    print(f"Clean wave: {clean_wave.shape}")
+    print(f"Mel spectrogram: {mel_spec.shape}")
+    print(f"Fourier transform: {fourier.shape}")
+    print(f"Noisy wave: {noisy_wave.shape}")

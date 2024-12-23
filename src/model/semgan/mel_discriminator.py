@@ -19,7 +19,8 @@ class MelDiscriminator(nn.Module):
                 Conv2dBlockD(512, 1024, 3, stride=2, padding=1, use_dropout=True),
             ]
         )
-        self.conv_final = nn.Conv2d(1024, 1, kernel_size=1)
+
+        self.adaptive_pool = nn.AdaptiveAvgPool2d((1, 1))
         self.lrelu_final = nn.LeakyReLU(0.03)
         self.fully_connected = nn.Linear(1024, 1)
         self.sigmoid = nn.Sigmoid()
@@ -27,14 +28,25 @@ class MelDiscriminator(nn.Module):
         self.init_weights()
 
     def init_weights(self):
-        """Initialize weights for all convolutional layers using Xavier Normal initialization."""
+        """Initialize weights using Xavier normal initialization."""
         for m in self.modules():
-            if isinstance(m, nn.Conv2d):
+            if isinstance(m, (nn.Conv2d, nn.Linear)):
                 nn.init.xavier_normal_(m.weight.data)
+                if m.bias is not None:
+                    nn.init.constant_(m.bias.data, 0)
 
     def forward(self, x: torch.Tensor, ref_x: torch.Tensor) -> torch.Tensor:
-        """Perform forward pass of the Mel Discriminator."""
+        """Forward pass with proper tensor dimensions.
+
+        Args:
+            x: Input tensor of shape (batch_size, channels, freq_bins, time_steps)
+            ref_x: Reference tensor of same shape as x
+
+        Returns:
+            Tensor of shape (batch_size, 1) containing discrimination scores
+        """
         ref_means, ref_meansq = [], []
+
         for block in self.conv_blocks:
             ref_x, mean, meansq = block(ref_x)
             ref_means.append(mean)
@@ -43,8 +55,8 @@ class MelDiscriminator(nn.Module):
         for i, block in enumerate(self.conv_blocks):
             x, _, _ = block(x, ref_means[i], ref_meansq[i])
 
-        x = self.conv_final(x)
+        x = self.adaptive_pool(x)
+        x = x.view(x.size(0), -1)
         x = self.lrelu_final(x)
-        x = torch.squeeze(x)
         x = self.fully_connected(x)
         return self.sigmoid(x)
