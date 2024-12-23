@@ -1,6 +1,6 @@
 data:
   path: "data/"
-  train: "trainset_200_samples"
+  train: "trainset_28spk_wav"
   test: "testset_wav"
 
 train:
