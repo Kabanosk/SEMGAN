@@ -5,6 +5,7 @@ import torch
 import torchaudio
 import torchaudio.transforms as T
 from torch.utils.data import Dataset
+from tqdm import tqdm
 
 
 class AudioDataset(Dataset):
@@ -51,8 +52,8 @@ class AudioDataset(Dataset):
     def _process_audio_file(self, clean_path: Path, noisy_path: Path) -> list:
         """Process a pair of clean and noisy audio files into segments."""
         try:
-            clean_waveform, sr = torchaudio.load(clean_path)
-            noisy_waveform, _ = torchaudio.load(noisy_path)
+            clean_waveform, sr = torchaudio.load(str(clean_path))
+            noisy_waveform, _ = torchaudio.load(str(noisy_path))
 
             if sr != self.sample_rate:
                 resampler = T.Resample(orig_freq=sr, new_freq=self.sample_rate)
@@ -67,8 +68,8 @@ class AudioDataset(Dataset):
             segments = []
             length = clean_waveform.size(1)
 
-            for start in range(
-                0, length - self.segment_length + 1, self.segment_length // 2
+            for start in tqdm(
+                range(0, length - self.segment_length + 1, self.segment_length // 2)
             ):
                 end = start + self.segment_length
 

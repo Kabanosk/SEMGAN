@@ -3,9 +3,10 @@ from pathlib import Path
 
 import torch
 import torch.nn as nn
-import wandb
 from torch.utils.data import DataLoader
 from tqdm import tqdm
+
+import wandb
 
 
 def parse_arguments() -> argparse.Namespace:
@@ -42,7 +43,7 @@ def setup_wandb(config: dict) -> None:
         wandb.init(
             project=wandb_config["project"],
             entity=wandb_config["entity"],
-            config=wandb_config,
+            config=config,
             tags=wandb_config["tags"],
             notes=wandb_config["notes"],
         )
@@ -136,6 +137,7 @@ def train_gan(
     discriminators: list[nn.Module],
     train_dataloader: DataLoader,
     config: dict,
+    starting_epoch: int = 0,
     device: torch.device | str = "cuda",
 ) -> None:
     generator = generator.to(device)
@@ -160,19 +162,21 @@ def train_gan(
     adversarial_loss = nn.BCELoss()
     l1_loss = nn.L1Loss()
     NUM_EPOCHS = config["train"]["epochs"]
-    LAMBDA_L1 = 100
+    LAMBDA_L1 = 1
 
     # Create output directory
     output_path = Path(config["train"]["output_path"])
     output_path.mkdir(parents=True, exist_ok=True)
 
     # Training loop
-    for epoch in range(NUM_EPOCHS):
+    for epoch in range(starting_epoch, starting_epoch + NUM_EPOCHS):
         generator.train()
         for d in discriminators:
             d.train()
 
-        progress_bar = tqdm(train_dataloader, desc=f"Epoch {epoch + 1}/{NUM_EPOCHS}")
+        progress_bar = tqdm(
+            train_dataloader, desc=f"Epoch {epoch + 1}/{starting_epoch+NUM_EPOCHS+1}"
+        )
 
         for batch_idx, (clean_wave, clean_mel, clean_fourier, noisy_wave) in enumerate(
             progress_bar
@@ -286,7 +290,7 @@ def train_gan(
                 continue
 
         # Save checkpoints
-        if (epoch + 1) % 5 == 0:
+        if (epoch + 1) % 100 == 0:
             torch.save(
                 {
                     "epoch": epoch,
@@ -314,7 +318,14 @@ if __name__ == "__main__":
     config = load_config(args.config)
     setup_wandb(config)
 
-    generator, discriminators = get_model("semgan")
+    if config["train"]["checkpoint_path"] == None:
+        generator, discriminators = get_model("semgan")
+        start = 0
+    else:
+        generator, discriminators = get_model(
+            "semgan", checkpoint=config["train"]["checkpoint_path"]
+        )
+        start = torch.load(config["train"]["checkpoint_path"])["epoch"]
 
     dataset = AudioDataset(
         base_path=config["data"]["path"],
@@ -326,8 +337,13 @@ if __name__ == "__main__":
         dataset,
         batch_size=config["train"]["batch_size"],
         shuffle=True,
-        num_workers=4,
-        pin_memory=True,
     )
 
-    train_gan(generator, discriminators, dataloader, config, device)
+    train_gan(
+        generator,
+        discriminators,
+        dataloader,
+        config,
+        starting_epoch=start,
+        device=device,
+    )
