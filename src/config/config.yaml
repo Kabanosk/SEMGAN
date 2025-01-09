@@ -11,10 +11,11 @@ train:
   beta2: 0.999
   output_path: "results/semgan"
   model_name: "semgan"
+  checkpoint_path: null  # "/path/to/checkpoint.pt"
 
 wandb:
   project: "semgan_project"
   tags:
     - "debug"
   notes: "Training with default configuration"
-  entity: "330083"
+  entity: ""
