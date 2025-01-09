@@ -41,8 +41,8 @@ class AudioDataset(Dataset):
         noisy_dir = self.path_to_dataset / f"noisy_{self.data_name}"
 
         segments = []
-
-        for clean_path in clean_dir.glob("*.wav"):
+        files = list(clean_dir.glob("*.wav"))
+        for clean_path in tqdm(files):
             noisy_path = noisy_dir / clean_path.name
             if noisy_path.exists():
                 segments.extend(self._process_audio_file(clean_path, noisy_path))
@@ -68,8 +68,8 @@ class AudioDataset(Dataset):
             segments = []
             length = clean_waveform.size(1)
 
-            for start in tqdm(
-                range(0, length - self.segment_length + 1, self.segment_length // 2)
+            for start in range(
+                0, length - self.segment_length + 1, self.segment_length // 2
             ):
                 end = start + self.segment_length
 
