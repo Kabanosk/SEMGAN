@@ -17,6 +17,8 @@ torchaudio = "^2.5.0"
 pyyaml = "^6.0.2"
 wandb = "^0.19.1"
 tqdm = "^4.67.1"
+black = "^24.10.0"
+isort = "^5.13.2"
 
 
 [build-system]
