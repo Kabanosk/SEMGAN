@@ -162,7 +162,7 @@ def train_gan(
     adversarial_loss = nn.BCELoss()
     l1_loss = nn.L1Loss()
     NUM_EPOCHS = config["train"]["epochs"]
-    LAMBDA_L1 = 1
+    LAMBDA_L1 = config["train"]["lambda_l1"]
 
     # Create output directory
     output_path = Path(config["train"]["output_path"])

@@ -6,6 +6,7 @@ from pathlib import Path
 import torch
 import torchaudio
 import torchaudio.transforms as T
+from tqdm import tqdm
 
 from src.utils.model import get_model
 
@@ -125,7 +126,7 @@ def main():
 
     # Load config and model
     generator, _ = get_model(
-        args.model_name,
+        args.model,
         checkpoint=args.checkpoint,
     )
 
@@ -139,9 +140,10 @@ def main():
         audio_files = [input_path]
     else:
         audio_files = list(input_path.glob("*.wav"))
-
-    for audio_file in tqdm(audio_files):
-        print(f"Processing {audio_file}")
+    
+    pbar = tqdm(audio_files)
+    for audio_file in pbar:
+        pbar.set_description(f"Processing {audio_file}")
         enhanced_file = process_audio(
             generator,
             audio_file,
