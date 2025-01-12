@@ -140,7 +140,7 @@ def main():
         audio_files = [input_path]
     else:
         audio_files = list(input_path.glob("*.wav"))
-    
+
     pbar = tqdm(audio_files)
     for audio_file in pbar:
         pbar.set_description(f"Processing {audio_file}")
