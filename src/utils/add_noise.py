@@ -39,8 +39,8 @@ def process_directory(input_dir, output_dir, snr_db=20):
 
 
 if __name__ == "__main__":
-    input_dir = "data/clean_trainset_1spk_wav"
-    output_dir = "data/noisy_trainset_1spk_wav"
+    input_dir = "../../data/clean_trainset_1spk_wav"
+    output_dir = "../../data/noisy_trainset_1spk_wav"
     snr_db = 20
 
     process_directory(input_dir, output_dir, snr_db)
