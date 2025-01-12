@@ -12,6 +12,7 @@ train:
   output_path: "results/semgan"
   model_name: "semgan"
   checkpoint_path: null  # "/path/to/checkpoint.pt"
+  lambda_l1: 100
 
 wandb:
   project: "semgan_project"
