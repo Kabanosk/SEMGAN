@@ -264,18 +264,28 @@ def train_gan(
 
                 # Logging
                 if wandb.run is not None:
-                    wandb.log(
-                        {
-                            "d_loss_wave": d_losses[0].item(),
-                            "d_loss_mel": d_losses[1].item(),
-                            "d_loss_fourier": d_losses[2].item(),
-                            "g_loss_wave": g_losses[0].item(),
-                            "g_loss_mel": g_losses[1].item(),
-                            "g_loss_fourier": g_losses[2].item(),
-                            "g_loss_reconstruction": reconstruction_loss.item(),
-                            "g_loss_total": g_loss_total.item(),
-                        }
-                    )
+                    if config["train"]["model_name"] == "semgan":
+                        wandb.log(
+                            {
+                                "d_loss_wave": d_losses[0].item(),
+                                "d_loss_mel": d_losses[1].item(),
+                                "d_loss_fourier": d_losses[2].item(),
+                                "g_loss_wave": g_losses[0].item(),
+                                "g_loss_mel": g_losses[1].item(),
+                                "g_loss_fourier": g_losses[2].item(),
+                                "g_loss_reconstruction": reconstruction_loss.item(),
+                                "g_loss_total": g_loss_total.item(),
+                            }
+                        )
+                    elif config["train"]["model_name"] == "segan":
+                        wandb.log(
+                            {
+                                "d_loss_wave": d_losses[0].item(),
+                                "g_loss_wave": g_losses[0].item(),
+                                "g_loss_reconstruction": reconstruction_loss.item(),
+                                "g_loss_total": g_loss_total.item(),
+                            }
+                        )
 
                 progress_bar.set_postfix(
                     {
@@ -319,11 +329,11 @@ if __name__ == "__main__":
     setup_wandb(config)
 
     if config["train"]["checkpoint_path"] == None:
-        generator, discriminators = get_model("semgan")
+        generator, discriminators = get_model(config["train"]["model_name"])
         start = 0
     else:
         generator, discriminators = get_model(
-            "semgan", checkpoint=config["train"]["checkpoint_path"]
+            config["train"]["model_name"], checkpoint=config["train"]["checkpoint_path"]
         )
         start = torch.load(config["train"]["checkpoint_path"])["epoch"]
 
